@@ -65,8 +65,12 @@ module SW #(parameter WIDTH_SCORE = 8, parameter WIDTH_POS_REF = 7, parameter WI
     // indices -------------------------------------------
     reg  [WIDTH_POS_REF  -1:0] i [0:15];
     reg  [WIDTH_POS_QUERY-1:0] j [0:15];
+    wire [WIDTH_POS_REF  -1:0] i_sub1 [0:15];
+    wire [WIDTH_POS_QUERY-1:0] j_sub1 [0:15];
     reg  [WIDTH_POS_REF  -1:0] delay_i [0:15];
     reg  [WIDTH_POS_QUERY-1:0] delay_j [0:15];
+    wire [WIDTH_POS_REF  -1:0] delay_i_sub1 [0:15];
+    wire [WIDTH_POS_QUERY-1:0] delay_j_sub1 [0:15];
     reg  [WIDTH_POS_REF  -1:0] next_i [0:15];
     reg  [WIDTH_POS_QUERY-1:0] next_j [0:15];
     reg  [5:0] cyc_count, next_cyc_count;
@@ -78,10 +82,14 @@ module SW #(parameter WIDTH_SCORE = 8, parameter WIDTH_POS_REF = 7, parameter WI
     reg  signed [WIDTH_SCORE-1:0] high  [0:64][0:48];
 
     // new cell values -----------------------------------
-    wire signed [2:0]             next_match [0:15];
-    wire signed [WIDTH_SCORE-1:0] next_ins   [0:15];
-    wire signed [WIDTH_SCORE-1:0] next_del   [0:15];
-    reg  signed [WIDTH_SCORE-1:0] next_high  [0:15];
+    //wire signed [2:0]             next_match [0:15];
+    //wire signed [WIDTH_SCORE-1:0] next_ins   [0:15];
+    //wire signed [WIDTH_SCORE-1:0] next_del   [0:15];
+    //reg  signed [WIDTH_SCORE-1:0] next_high  [0:15];
+    reg  signed [7:0]             next_match [0:63][0:47];
+    reg  signed [WIDTH_SCORE-1:0] next_ins   [0:64][0:48];
+    reg  signed [WIDTH_SCORE-1:0] next_del   [0:64][0:48];
+    reg  signed [WIDTH_SCORE-1:0] next_high  [0:64][0:48];
 
     // values for comparisons ----------------------------
     wire signed [WIDTH_SCORE-1:0] high_ins_open [0:15];
@@ -91,13 +99,10 @@ module SW #(parameter WIDTH_SCORE = 8, parameter WIDTH_POS_REF = 7, parameter WI
     wire signed [WIDTH_SCORE-1:0] high_match    [0:15];
 
     // for loops indices
-    genvar u;
+    genvar u, v, w;
     integer x, y, z;
 
     // signals for debugging
-    wire signed [7:0] debug_ins_delay;
-    wire signed [7:0] debug_del_delay;
-    wire signed [7:0] debug_high_dij;
 
 //------------------------------------------------------------------
 // submodule
@@ -107,10 +112,15 @@ module SW #(parameter WIDTH_SCORE = 8, parameter WIDTH_POS_REF = 7, parameter WI
 // combinational part
 //------------------------------------------------------------------
 
-    // debug
-    assign debug_ins_delay = ins[3][18];
-    assign debug_del_delay = del[3][18];
-    assign debug_high_dij = high[2][17];
+    // debug ---------------------------------------------
+
+    // index -1 values
+    for (u = 0; u <= 15; u = u + 1) begin
+        assign i_sub1[u] = i[u] - 1;
+        assign j_sub1[u] = j[u] - 1;
+        assign delay_i_sub1[u] = delay_i[u] - 1;
+        assign delay_j_sub1[u] = delay_j[u] - 1;
+    end
 
     // compute values for comparisons --------------------
     for (u = 0; u <= 15; u = u + 1) begin
@@ -118,44 +128,22 @@ module SW #(parameter WIDTH_SCORE = 8, parameter WIDTH_POS_REF = 7, parameter WI
 	// so in some cases I use the current next_high cell value
         if (u == 0)
 	    // first PE: use upper highest cell value
-	    assign high_ins_open[u] = high[i[u]][j[u]-1] - G_OPEN;
+	    assign high_ins_open[u] = high[i[u]][j_sub1[u]] - G_OPEN;
 	else
 	    // other PE: use next_high cell value from previous PE
-	    assign high_ins_open[u] = next_high[u-1] - G_OPEN;
+	    assign high_ins_open[u] = next_high[i[u]][j_sub1[u]] - G_OPEN;
 
-	assign high_del_open[u] = (i[u] == 1) ? - G_OPEN : next_high[u] - G_OPEN;
+	assign high_del_open[u] = (i[u] == 1) ? - G_OPEN : next_high[i_sub1[u]][j[u]] - G_OPEN;
 
-	assign ins_ext[u] = ins [i[u]  ][j[u]-1] - G_EXTEND;
-	assign del_ext[u] = del [i[u]-1][j[u]  ] - G_EXTEND;
-	assign high_match[u] = high[delay_i[u]-1][delay_j[u]-1] + match[delay_i[u]-1][delay_j[u]-1];
-    end
-
-    // match, ins, del cell logic
-    // highest cell logic is in the always block for multiple comparisons
-    for (u = 0; u <= 15; u = u + 1) begin
-        assign next_match[u] = (ref[i[u]-1] == query[j[u]-1]) ? MATCH : MISMATCH;
-	assign next_ins  [u] = (high_ins_open[u] >= ins_ext[u]) ? high_ins_open[u] : ins_ext[u];
-	assign next_del  [u] = (high_del_open[u] >= del_ext[u]) ? high_del_open[u] : del_ext[u];
+	assign ins_ext[u] = ins[i[u]][j_sub1[u]] - G_EXTEND;
+	assign del_ext[u] = del[i_sub1[u]][j[u]] - G_EXTEND;
+	assign high_match[u] = high[delay_i_sub1[u]][delay_j_sub1[u]] + match[delay_i_sub1[u]][delay_j_sub1[u]];
     end
 
     // output --------------------------------------------
     assign next_finish = (comp_state && cyc_count == 15) ? 1 : 0;
 
     always @(*) begin
-        // initialize ins, del, high tables --------------
-	// row 0
-        for (x = 1; x <= 64; x = x + 1) begin
-            ins[x][0] = -8;
-            del[x][0] = -8;
-            high[x][0] = 0;
-        end
-	// column 0
-        for (y = 0; y <= 48; y = y + 1) begin
-            ins[0][y] = -8;
-            del[0][y] = -8;
-            high[0][y] = 0;
-        end
-
 	// next state logic ------------------------------
 	// table filling state
 	case(fill_state)
@@ -248,49 +236,604 @@ module SW #(parameter WIDTH_SCORE = 8, parameter WIDTH_POS_REF = 7, parameter WI
 	else
 	    next_cyc_count = 0;
 
-	// highest cell value logic ------------------------------
-	for (x = 0; x <= 15; x = x + 1) begin
-	if (delay_i[x] != 0) begin
-	    if (high_match[x] >= ins[delay_i[x]][delay_j[x]]) begin
-                if (high_match[x] >= del[delay_i[x]][delay_j[x]]) begin
-                    if (high_match[x] >= 0)
-                        next_high[x] = high_match[x];
-                    else
-                        next_high[x] = 0;
+	// cell value logic ------------------------------
+	// boundary conditions
+	// row 0
+        for (x = 1; x <= 64; x = x + 1) begin
+            next_ins[x][0] = -8;
+            next_del[x][0] = -8;
+            next_high[x][0] = 0;
+        end
+	// column 0
+        for (y = 0; y <= 48; y = y + 1) begin
+            next_ins[0][y] = -8;
+            next_del[0][y] = -8;
+            next_high[0][y] = 0;
+        end
+
+        // cell update logic
+	for (x = 1; x <= 64; x = x + 1) begin
+	for (y = 1; y <= 48; y = y + 1) begin
+	    // next match, ins, del
+	    if (x == i[0] && y == j[0]) begin
+	        next_match[x-1][y-1] = (ref[i[0]-1] == query[j[0]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[0] >= ins_ext[0]) ? high_ins_open[0] : ins_ext[0];
+		next_del[x][y] = (high_del_open[0] >= del_ext[0]) ? high_del_open[0] : del_ext[0];
+	    end
+	    else if (x == i[1] && y == j[1]) begin
+	        next_match[x-1][y-1] = (ref[i[1]-1] == query[j[1]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[1] >= ins_ext[1]) ? high_ins_open[1] : ins_ext[1];
+		next_del[x][y] = (high_del_open[1] >= del_ext[1]) ? high_del_open[1] : del_ext[1];
+	    end
+	    else if (x == i[2] && y == j[2]) begin
+	        next_match[x-1][y-1] = (ref[i[2]-1] == query[j[2]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[2] >= ins_ext[2]) ? high_ins_open[2] : ins_ext[2];
+		next_del[x][y] = (high_del_open[2] >= del_ext[2]) ? high_del_open[2] : del_ext[2];
+	    end
+	    else if (x == i[3] && y == j[3]) begin
+	        next_match[x-1][y-1] = (ref[i[3]-1] == query[j[3]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[3] >= ins_ext[3]) ? high_ins_open[3] : ins_ext[3];
+		next_del[x][y] = (high_del_open[3] >= del_ext[3]) ? high_del_open[3] : del_ext[3];
+	    end
+	    else if (x == i[4] && y == j[4]) begin
+	        next_match[x-1][y-1] = (ref[i[4]-1] == query[j[4]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[4] >= ins_ext[4]) ? high_ins_open[4] : ins_ext[4];
+		next_del[x][y] = (high_del_open[4] >= del_ext[4]) ? high_del_open[4] : del_ext[4];
+	    end
+	    else if (x == i[5] && y == j[5]) begin
+	        next_match[x-1][y-1] = (ref[i[5]-1] == query[j[5]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[5] >= ins_ext[5]) ? high_ins_open[5] : ins_ext[5];
+		next_del[x][y] = (high_del_open[5] >= del_ext[5]) ? high_del_open[5] : del_ext[5];
+	    end
+	    else if (x == i[6] && y == j[6]) begin
+	        next_match[x-1][y-1] = (ref[i[6]-1] == query[j[6]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[6] >= ins_ext[6]) ? high_ins_open[6] : ins_ext[6];
+		next_del[x][y] = (high_del_open[6] >= del_ext[6]) ? high_del_open[6] : del_ext[6];
+	    end
+	    else if (x == i[7] && y == j[7]) begin
+	        next_match[x-1][y-1] = (ref[i[7]-1] == query[j[7]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[7] >= ins_ext[7]) ? high_ins_open[7] : ins_ext[7];
+		next_del[x][y] = (high_del_open[7] >= del_ext[7]) ? high_del_open[7] : del_ext[7];
+	    end
+	    else if (x == i[8] && y == j[8]) begin
+	        next_match[x-1][y-1] = (ref[i[8]-1] == query[j[8]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[8] >= ins_ext[8]) ? high_ins_open[8] : ins_ext[8];
+		next_del[x][y] = (high_del_open[8] >= del_ext[8]) ? high_del_open[8] : del_ext[8];
+	    end
+	    else if (x == i[9] && y == j[9]) begin
+	        next_match[x-1][y-1] = (ref[i[9]-1] == query[j[9]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[9] >= ins_ext[9]) ? high_ins_open[9] : ins_ext[9];
+		next_del[x][y] = (high_del_open[9] >= del_ext[9]) ? high_del_open[9] : del_ext[9];
+	    end
+	    else if (x == i[10] && y == j[10]) begin
+	        next_match[x-1][y-1] = (ref[i[10]-1] == query[j[10]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[10] >= ins_ext[10]) ? high_ins_open[10] : ins_ext[10];
+		next_del[x][y] = (high_del_open[10] >= del_ext[10]) ? high_del_open[10] : del_ext[10];
+	    end
+	    else if (x == i[11] && y == j[11]) begin
+	        next_match[x-1][y-1] = (ref[i[11]-1] == query[j[11]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[11] >= ins_ext[11]) ? high_ins_open[11] : ins_ext[11];
+		next_del[x][y] = (high_del_open[11] >= del_ext[11]) ? high_del_open[11] : del_ext[11];
+	    end
+	    else if (x == i[12] && y == j[12]) begin
+	        next_match[x-1][y-1] = (ref[i[12]-1] == query[j[12]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[12] >= ins_ext[12]) ? high_ins_open[12] : ins_ext[12];
+		next_del[x][y] = (high_del_open[12] >= del_ext[12]) ? high_del_open[12] : del_ext[12];
+	    end
+	    else if (x == i[13] && y == j[13]) begin
+	        next_match[x-1][y-1] = (ref[i[13]-1] == query[j[13]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[13] >= ins_ext[13]) ? high_ins_open[13] : ins_ext[13];
+		next_del[x][y] = (high_del_open[13] >= del_ext[13]) ? high_del_open[13] : del_ext[13];
+	    end
+	    else if (x == i[14] && y == j[14]) begin
+	        next_match[x-1][y-1] = (ref[i[14]-1] == query[j[14]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[14] >= ins_ext[14]) ? high_ins_open[14] : ins_ext[14];
+		next_del[x][y] = (high_del_open[14] >= del_ext[14]) ? high_del_open[14] : del_ext[14];
+	    end
+	    else if (x == i[15] && y == j[15]) begin
+	        next_match[x-1][y-1] = (ref[i[15]-1] == query[j[15]-1]) ? MATCH : MISMATCH;
+		next_ins[x][y] = (high_ins_open[15] >= ins_ext[15]) ? high_ins_open[15] : ins_ext[15];
+		next_del[x][y] = (high_del_open[15] >= del_ext[15]) ? high_del_open[15] : del_ext[15];
+	    end
+	    else begin // not updated in this cycle
+	        next_match[x-1][y-1] = match[x-1][y-1];
+		next_ins[x][y] = ins[x][y];
+		next_del[x][y] = del[x][y];
+	    end
+
+	    // next high
+	    if (delay_i[0] == x && delay_j[0] == y) begin
+	        if (high_match[0] >= ins[x][y]) begin
+                    if (high_match[0] >= del[x][y]) begin
+                        if (high_match[0] >= 0)
+                            next_high[x][y] = high_match[0];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
                 end
                 else begin
-                    if (del[delay_i[x]][delay_j[x]] >= 0)
-                        next_high[x] = del[delay_i[x]][delay_j[x]];
-                    else
-                        next_high[x] = 0;
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
                 end
-            end
-            else begin
-                if (ins[delay_i[x]][delay_j[x]] >= del[delay_i[x]][delay_j[x]]) begin
-                    if (ins[delay_i[x]][delay_j[x]] >= 0)
-                        next_high[x] = ins[delay_i[x]][delay_j[x]];
-                    else
-                        next_high[x] = 0;
+	    end
+	    else if (delay_i[1] == x && delay_j[1] == y) begin
+	        if (high_match[1] >= ins[x][y]) begin
+                    if (high_match[1] >= del[x][y]) begin
+                        if (high_match[1] >= 0)
+                            next_high[x][y] = high_match[1];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
                 end
                 else begin
-                    if (del[delay_i[x]][delay_j[x]] >= 0)
-                        next_high[x] = del[delay_i[x]][delay_j[x]];
-                    else
-                        next_high[x] = 0;
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
                 end
-            end
+	    end
+	    else if (delay_i[2] == x && delay_j[2] == y) begin
+	        if (high_match[2] >= ins[x][y]) begin
+                    if (high_match[2] >= del[x][y]) begin
+                        if (high_match[2] >= 0)
+                            next_high[x][y] = high_match[2];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[3] == x && delay_j[3] == y) begin
+	        if (high_match[3] >= ins[x][y]) begin
+                    if (high_match[3] >= del[x][y]) begin
+                        if (high_match[3] >= 0)
+                            next_high[x][y] = high_match[3];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[4] == x && delay_j[4] == y) begin
+	        if (high_match[4] >= ins[x][y]) begin
+                    if (high_match[4] >= del[x][y]) begin
+                        if (high_match[4] >= 0)
+                            next_high[x][y] = high_match[4];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[5] == x && delay_j[5] == y) begin
+	        if (high_match[5] >= ins[x][y]) begin
+                    if (high_match[5] >= del[x][y]) begin
+                        if (high_match[5] >= 0)
+                            next_high[x][y] = high_match[5];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[6] == x && delay_j[6] == y) begin
+	        if (high_match[6] >= ins[x][y]) begin
+                    if (high_match[6] >= del[x][y]) begin
+                        if (high_match[6] >= 0)
+                            next_high[x][y] = high_match[6];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[7] == x && delay_j[7] == y) begin
+	        if (high_match[7] >= ins[x][y]) begin
+                    if (high_match[7] >= del[x][y]) begin
+                        if (high_match[7] >= 0)
+                            next_high[x][y] = high_match[7];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[8] == x && delay_j[8] == y) begin
+	        if (high_match[8] >= ins[x][y]) begin
+                    if (high_match[8] >= del[x][y]) begin
+                        if (high_match[8] >= 0)
+                            next_high[x][y] = high_match[8];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[9] == x && delay_j[9] == y) begin
+	        if (high_match[9] >= ins[x][y]) begin
+                    if (high_match[9] >= del[x][y]) begin
+                        if (high_match[9] >= 0)
+                            next_high[x][y] = high_match[9];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[10] == x && delay_j[10] == y) begin
+	        if (high_match[10] >= ins[x][y]) begin
+                    if (high_match[10] >= del[x][y]) begin
+                        if (high_match[10] >= 0)
+                            next_high[x][y] = high_match[10];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[11] == x && delay_j[11] == y) begin
+	        if (high_match[11] >= ins[x][y]) begin
+                    if (high_match[11] >= del[x][y]) begin
+                        if (high_match[11] >= 0)
+                            next_high[x][y] = high_match[11];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[12] == x && delay_j[12] == y) begin
+	        if (high_match[12] >= ins[x][y]) begin
+                    if (high_match[12] >= del[x][y]) begin
+                        if (high_match[12] >= 0)
+                            next_high[x][y] = high_match[12];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[13] == x && delay_j[13] == y) begin
+	        if (high_match[13] >= ins[x][y]) begin
+                    if (high_match[13] >= del[x][y]) begin
+                        if (high_match[13] >= 0)
+                            next_high[x][y] = high_match[13];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[14] == x && delay_j[14] == y) begin
+	        if (high_match[14] >= ins[x][y]) begin
+                    if (high_match[14] >= del[x][y]) begin
+                        if (high_match[14] >= 0)
+                            next_high[x][y] = high_match[14];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else if (delay_i[15] == x && delay_j[15] == y) begin
+	        if (high_match[15] >= ins[x][y]) begin
+                    if (high_match[15] >= del[x][y]) begin
+                        if (high_match[15] >= 0)
+                            next_high[x][y] = high_match[15];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+                else begin
+                    if (ins[x][y] >= del[x][y]) begin
+                        if (ins[x][y] >= 0)
+                            next_high[x][y] = ins[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                    else begin
+                        if (del[x][y] >= 0)
+                            next_high[x][y] = del[x][y];
+                        else
+                            next_high[x][y] = 0;
+                    end
+                end
+	    end
+	    else 
+	        next_high[x][y] = high[x][y];
 	end
-	else
-	    next_high[x] = 0;
 	end
 
 	// output logic ----------------------------------
 	// temporary max
 	for (x = 0; x <= 15; x = x + 1) begin
-	    if (next_high[x] > max_tmp[x] && fill_state != WAIT) begin
-	        next_max_tmp      [x] = next_high[x];
-		next_pos_ref_tmp  [x] = delay_i  [x];
-		next_pos_query_tmp[x] = delay_j  [x];
+	    if (next_high[delay_i[x]][delay_j[x]] > max_tmp[x] && fill_state != WAIT) begin
+	        next_max_tmp      [x] = next_high[delay_i[x]][delay_j[x]];
+		next_pos_ref_tmp  [x] = delay_i [x];
+		next_pos_query_tmp[x] = delay_j [x];
 	    end
 	    else begin
 	        next_max_tmp      [x] = max_tmp      [x];
@@ -354,32 +897,18 @@ module SW #(parameter WIDTH_SCORE = 8, parameter WIDTH_POS_REF = 7, parameter WI
 	    delay_j[x] <= 0;
 	end
 	// cells
-	for (x = 0; x <= 15; x = x + 1) begin
-	    if (i[x] != 0) begin
-	        match[i[x]-1][j[x]-1] <= 0;
-	        ins  [i[x]][j[x]] <= 0;
-	        del  [i[x]][j[x]] <= 0;
-	    end
-	    else begin
-		match[i[x]-1][j[x]-1] <= match[i[x]-1][j[x]-1];
-		ins  [i[x]][j[x]] <= ins  [i[x]][j[x]];
-		del  [i[x]][j[x]] <= del  [i[x]][j[x]];
-	    end
-	    if (delay_i[x] != 0)
-	        high[delay_i[x]][delay_j[x]] = 0;
-	    else
-	        high[delay_i[x]][delay_j[x]] = high[delay_i[x]][delay_j[x]];
+	for (x = 0; x <= 63; x = x + 1) begin
+	for (y = 0; y <= 47; y = y + 1) begin
+	    match[x][y] = MISMATCH;
 	end
-	/*
-	for (x = 1; x <= 64; x = x + 1) begin
-	    for (y = 1; y <= 48; y = y + 1) begin
-	        match [x-1][y-1] <= 0;
-	        ins   [x][y] <= 0;
-		del   [x][y] <= 0;
-		high  [x][y] <= 0;
-	    end
 	end
-	*/
+	for (x = 0; x <= 64; x = x + 1) begin
+	for (y = 0; y <= 48; y = y + 1) begin
+	    ins[x][y] = -8;
+	    del[x][y] = -8;
+	    high[x][y] = 0;
+	end
+	end
     end
     else begin // not reset
         fill_state <= next_fill_state;
@@ -432,45 +961,18 @@ module SW #(parameter WIDTH_SCORE = 8, parameter WIDTH_POS_REF = 7, parameter WI
 	    endcase
 	end
 	// cells ------------------------------------------
-	/*
-	for (x = 1; x <= 64; x = x + 1) begin
-	    for (y = 1; y <= 48; y = y + 1) begin
-	        for (z = 0; z <= 15; z = z + 1) begin
-		    // match, ins, del cells
-		    if (x == i[z] && y == j[z]) begin
-			match[x-1][y-1] <= next_match[z];
-			ins  [x][y] <= next_ins[z];
-			del  [x][y] <= next_del[z];
-		    end
-		    else begin
-			match[x-1][y-1] <= match[x-1][y-1];
-			ins  [x][y] <= ins[x][y];
-			del  [x][y] <= del[x][y];
-		    end
-		    // highest cells, use delayed indices
-		    if (x == delay_i[z] && y == delay_j[z])
-			high[x][y] <= next_high[z];
-		    else
-		        high[x][y] <= high[x][y];
-		end
-	    end
+	for (x = 0; x <= 64; x = x + 1) begin
+	for (y = 0; y <= 48; y = y + 1) begin
+	    match[x][y] = next_match[x][y];
 	end
-	*/
-	for (x = 0; x <= 15; x = x + 1) begin
-	    if (i[x] != 0) begin
-		match[i[x]-1][j[x]-1] <= next_match[x];
-		ins  [i[x]][j[x]] <= next_ins[x];
-		del  [i[x]][j[x]] <= next_del[x];
-	    end
-	    else begin
-		match[i[x]-1][j[x]-1] <= match[i[x]-1][j[x]-1];
-		ins  [i[x]][j[x]] <= ins  [i[x]][j[x]];
-		del  [i[x]][j[x]] <= del  [i[x]][j[x]];
-	    end
-	    if (delay_i[x] != 0)
-	        high[delay_i[x]][delay_j[x]] = next_high[x];
-	    else
-	        high[delay_i[x]][delay_j[x]] = high[delay_i[x]][delay_j[x]];
+	end
+
+	for (x = 0; x <= 64; x = x + 1) begin
+	for (y = 0; y <= 48; y = y + 1) begin
+	    ins[x][y] = next_ins[x][y];
+	    del[x][y] = next_del[x][y];
+	    high[x][y] = next_high[x][y];
+	end 
 	end
     end
     end
